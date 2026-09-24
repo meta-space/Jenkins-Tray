@@ -18,7 +18,7 @@ public record Project(string Name, bool IsBuilding, string Result, string BuildN
 public static class Jenkins
 {
     const string Fields = "fullName,url,color,lastCompletedBuild[number,result]";
-    // ponytail: 3 nesting levels (folder > multibranch > branch); add a level if deeper folders show up.
+    // 3 nesting levels (folder > multibranch > branch); add a level if deeper folders show up.
     const string Tree = $"jobs[{Fields},jobs[{Fields},jobs[{Fields}]]]";
 
     public static List<Project> Parse(string json) => Leaves(JsonNode.Parse(json)!["jobs"]).ToList();
@@ -57,8 +57,9 @@ public static class Jenkins
     public static Color Overall(IEnumerable<Project> monitored)
     {
         var ps = monitored.ToList();
-        return ps.Any(p => p.IsFailed) ? Color.Red
-             : ps.Any(p => p.IsBuilding) ? Color.Orange
+        return 
+              ps.Any(p => p.IsBuilding) ? Color.Orange
+             : ps.Any(p => p.IsFailed) ? Color.Red
              : ps.Any(p => p.IsSuccess) ? Color.LimeGreen
              : Color.Gray;
     }
