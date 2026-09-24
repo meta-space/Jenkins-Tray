@@ -20,7 +20,7 @@ public class MainForm : Form
     readonly NumericUpDown interval = new() { Minimum = 5, Maximum = 3600, Width = 70 };
     readonly ToolStripStatusLabel status = new();
     Dictionary<string, Project> last = [];
-    bool loading, polling;
+    bool loading, polling, started;
 
     public MainForm()
     {
@@ -55,6 +55,9 @@ public class MainForm : Form
         var strip = new StatusStrip();
         strip.Items.Add(status);
         Controls.AddRange([tabs, top, strip]); // Fill must be added first to dock last
+        // Create the checkbox list's handle while it is empty: a ListView whose handle is created later (tab first shown)
+        // re-syncs its check states and fires ItemChecked for every row, which would re-enter UpdateList and duplicate rows.
+        _ = all.Handle;
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show", null, (_, _) => ShowWindow());
@@ -79,7 +82,7 @@ public class MainForm : Form
     // Start hidden in the tray; only show the window on first run so credentials can be entered.
     protected override void SetVisibleCore(bool value)
     {
-        if (!IsHandleCreated) { CreateHandle(); value = settings.User == ""; }
+        if (!started) { started = true; if (!IsHandleCreated) CreateHandle(); value = settings.User == ""; }
         base.SetVisibleCore(value);
     }
 
