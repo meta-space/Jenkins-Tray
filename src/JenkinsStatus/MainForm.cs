@@ -12,7 +12,8 @@ public class MainForm : Form
     readonly System.Windows.Forms.Timer timer = new();
     readonly NotifyIcon tray = new() { Text = "Jenkins Status", Visible = true };
     readonly Dictionary<Color, Icon> icons = [];
-    readonly ListView list = new() { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = true, FullRowSelect = true, Sorting = SortOrder.Ascending };
+    readonly ListView monitored = NewList(checkBoxes: false);
+    readonly ListView all = NewList(checkBoxes: true);
     readonly TextBox server = new() { Width = 250 };
     readonly TextBox user = new() { Width = 120 };
     readonly TextBox token = new() { Width = 200, UseSystemPasswordChar = true };
@@ -23,24 +24,24 @@ public class MainForm : Form
 
     public MainForm()
     {
-        Text = "Jenkins Status - check the projects to monitor";
+        Text = "Jenkins Status";
         Size = new Size(900, 550);
         tray.Icon = Icon = IconFor(Color.Gray);
 
-        list.SmallImageList = new ImageList();
-        foreach (var c in StatusColors) list.SmallImageList.Images.Add(c.Name, Dot(c));
-        list.Columns.Add("Project", 450);
-        list.Columns.Add("Last build", 100);
-        list.Columns.Add("Build #", 80);
-        list.Columns.Add("Activity", 100);
-        list.ItemChecked += (_, e) =>
+        all.ItemChecked += (_, e) =>
         {
             if (loading) return;
             if (e.Item.Checked) settings.Projects.Add(e.Item.Name); else settings.Projects.Remove(e.Item.Name);
             settings.Save();
+            UpdateList();
             UpdateTray();
         };
-        list.ItemActivate += (_, _) => { if (list.FocusedItem?.Tag is Project p) Open(p.WebUrl); };
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add("Monitored");
+        tabs.TabPages.Add("All projects (check to monitor)");
+        tabs.TabPages[0].Controls.Add(monitored);
+        tabs.TabPages[1].Controls.Add(all);
+        if (settings.Projects.Count == 0) tabs.SelectedIndex = 1;
 
         server.Text = settings.ServerUrl;
         user.Text = settings.User;
@@ -53,7 +54,7 @@ public class MainForm : Form
         top.Controls.AddRange([L("Server"), server, L("User"), user, L("API token"), token, L("Poll (s)"), interval, apply]);
         var strip = new StatusStrip();
         strip.Items.Add(status);
-        Controls.AddRange([list, top, strip]); // Fill must be added first to dock last
+        Controls.AddRange([tabs, top, strip]); // Fill must be added first to dock last
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show", null, (_, _) => ShowWindow());
@@ -96,7 +97,7 @@ public class MainForm : Form
         settings.Save();
         timer.Interval = settings.PollSeconds * 1000;
         last = []; // server may have changed; don't report its builds as "finished"
-        list.Items.Clear();
+        UpdateList();
         await PollAsync();
     }
 
@@ -131,10 +132,19 @@ public class MainForm : Form
     void UpdateList()
     {
         loading = true;
+        Sync(all, last.Values);
+        Sync(monitored, last.Values.Where(p => settings.Projects.Contains(p.Name)));
+        loading = false;
+    }
+
+    // Update rows in place (keeps selection and scroll position), adding/removing as projects come and go.
+    void Sync(ListView list, IEnumerable<Project> projects)
+    {
+        var wanted = projects.ToDictionary(p => p.Name);
         list.BeginUpdate();
-        foreach (var gone in list.Items.Cast<ListViewItem>().Where(i => !last.ContainsKey(i.Name)).ToList())
+        foreach (var gone in list.Items.Cast<ListViewItem>().Where(i => !wanted.ContainsKey(i.Name)).ToList())
             list.Items.Remove(gone);
-        foreach (var p in last.Values)
+        foreach (var p in wanted.Values)
         {
             var item = list.Items[p.Name] ?? list.Items.Add(
                 new ListViewItem([p.Name, "", "", ""]) { Name = p.Name, Checked = settings.Projects.Contains(p.Name) });
@@ -145,16 +155,28 @@ public class MainForm : Form
             item.Tag = p;
         }
         list.EndUpdate();
-        loading = false;
+    }
+
+    static ListView NewList(bool checkBoxes)
+    {
+        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = checkBoxes, FullRowSelect = true, Sorting = SortOrder.Ascending };
+        list.SmallImageList = new ImageList();
+        foreach (var c in StatusColors) list.SmallImageList.Images.Add(c.Name, Dot(c));
+        list.Columns.Add("Project", 450);
+        list.Columns.Add("Last build", 100);
+        list.Columns.Add("Build #", 80);
+        list.Columns.Add("Activity", 100);
+        list.ItemActivate += (_, _) => { if (list.FocusedItem?.Tag is Project p) Open(p.WebUrl); };
+        return list;
     }
 
     void UpdateTray()
     {
-        var monitored = last.Values.Where(p => settings.Projects.Contains(p.Name)).ToList();
-        tray.Icon = Icon = IconFor(Jenkins.Overall(monitored));
-        var failing = monitored.Where(p => p.IsFailed).Select(p => p.Name).ToList();
+        var watched = last.Values.Where(p => settings.Projects.Contains(p.Name)).ToList();
+        tray.Icon = Icon = IconFor(Jenkins.Overall(watched));
+        var failing = watched.Where(p => p.IsFailed).Select(p => p.Name).ToList();
         tray.Text = Truncate(failing.Count == 0
-            ? $"Jenkins Status: {monitored.Count} monitored, all OK"
+            ? $"Jenkins Status: {watched.Count} monitored, all OK"
             : $"Failing: {string.Join(", ", failing)}");
     }
 
