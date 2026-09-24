@@ -2,34 +2,46 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using System.Xml.Linq;
 
 namespace JenkinsStatus;
 
-// One <Project> entry of Jenkins' CCTray feed (cc.xml).
-public record Project(string Name, string Activity, string LastBuildStatus, string LastBuildLabel, string WebUrl)
+// A buildable Jenkins job. Result is the Jenkins result of the last completed build (SUCCESS, FAILURE, UNSTABLE, ABORTED, ...).
+public record Project(string Name, bool IsBuilding, string Result, string BuildNumber, string WebUrl)
 {
-    public bool IsBuilding => Activity == "Building";
-    public bool IsFailed => LastBuildStatus is "Failure" or "Exception";
-    public bool IsSuccess => LastBuildStatus == "Success";
+    public bool IsFailed => Result is "FAILURE" or "UNSTABLE";
+    public bool IsSuccess => Result == "SUCCESS";
     public Color Color => IsBuilding ? Color.Orange : IsFailed ? Color.Red : IsSuccess ? Color.LimeGreen : Color.Gray;
 }
 
 public static class Jenkins
 {
-    public static List<Project> Parse(string ccXml) =>
-        XDocument.Parse(ccXml).Root!.Elements("Project").Select(p => new Project(
-            (string?)p.Attribute("name") ?? "",
-            (string?)p.Attribute("activity") ?? "",
-            (string?)p.Attribute("lastBuildStatus") ?? "",
-            (string?)p.Attribute("lastBuildLabel") ?? "",
-            (string?)p.Attribute("webUrl") ?? "")).ToList();
+    const string Fields = "fullName,url,color,lastCompletedBuild[number,result]";
+    // ponytail: 3 nesting levels (folder > multibranch > branch); add a level if deeper folders show up.
+    const string Tree = $"jobs[{Fields},jobs[{Fields},jobs[{Fields}]]]";
+
+    public static List<Project> Parse(string json) => Leaves(JsonNode.Parse(json)!["jobs"]).ToList();
+
+    // Folders/multibranch projects have "jobs" (or, at the deepest level, no "color"); only real jobs are returned.
+    static IEnumerable<Project> Leaves(JsonNode? jobs) =>
+        jobs?.AsArray().SelectMany(j => j!["jobs"] is JsonArray children ? Leaves(children)
+            : j["color"] is null ? [] : [ToProject(j)]) ?? [];
+
+    static Project ToProject(JsonNode j)
+    {
+        var last = j["lastCompletedBuild"];
+        return new Project(
+            Uri.UnescapeDataString((string)j["fullName"]!), // branch names are stored escaped, e.g. feature%2Ffoo
+            ((string?)j["color"] ?? "").EndsWith("_anime"),
+            (string?)last?["result"] ?? "",
+            last?["number"]?.ToString() ?? "",
+            (string?)j["url"] ?? "");
+    }
 
     public static async Task<List<Project>> FetchAsync(HttpClient http, Settings s)
     {
-        // ?recursive includes jobs inside folders / multibranch pipelines.
-        using var req = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/cc.xml?recursive");
+        using var req = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/api/json?tree=" + Tree);
         if (s.User != "")
             req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(Encoding.UTF8.GetBytes($"{s.User}:{s.ApiToken}")));
@@ -40,7 +52,7 @@ public static class Jenkins
 
     // Projects whose last completed build changed since the previous poll.
     public static List<Project> Finished(IReadOnlyDictionary<string, Project> before, IEnumerable<Project> after) =>
-        after.Where(p => before.TryGetValue(p.Name, out var old) && old.LastBuildLabel != p.LastBuildLabel).ToList();
+        after.Where(p => before.TryGetValue(p.Name, out var old) && old.BuildNumber != p.BuildNumber).ToList();
 
     public static Color Overall(IEnumerable<Project> monitored)
     {

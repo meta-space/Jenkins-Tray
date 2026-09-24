@@ -111,7 +111,7 @@ public class MainForm : Form
             if (done.Count > 0)
                 tray.ShowBalloonTip(5000,
                     done.Any(p => p.IsFailed) ? "Build failed" : "Build succeeded",
-                    string.Join("\n", done.Select(p => $"{p.Name} #{p.LastBuildLabel}: {p.LastBuildStatus}")),
+                    string.Join("\n", done.Select(p => $"{p.Name} #{p.BuildNumber}: {p.Result}")),
                     done.Any(p => p.IsFailed) ? ToolTipIcon.Error : ToolTipIcon.Info);
 
             last = projects.ToDictionary(p => p.Name);
@@ -138,9 +138,9 @@ public class MainForm : Form
         {
             var item = list.Items[p.Name] ?? list.Items.Add(
                 new ListViewItem([p.Name, "", "", ""]) { Name = p.Name, Checked = settings.Projects.Contains(p.Name) });
-            item.SubItems[1].Text = p.LastBuildStatus;
-            item.SubItems[2].Text = p.LastBuildLabel;
-            item.SubItems[3].Text = p.Activity;
+            item.SubItems[1].Text = p.Result;
+            item.SubItems[2].Text = p.BuildNumber;
+            item.SubItems[3].Text = p.IsBuilding ? "Building" : "";
             item.ImageKey = p.Color.Name;
             item.Tag = p;
         }
