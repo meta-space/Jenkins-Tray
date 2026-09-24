@@ -1,0 +1,193 @@
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+
+namespace JenkinsStatus;
+
+public class MainForm : Form
+{
+    static readonly Color[] StatusColors = [Color.LimeGreen, Color.Red, Color.Orange, Color.Gray];
+
+    readonly Settings settings = Settings.Load();
+    readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    readonly System.Windows.Forms.Timer timer = new();
+    readonly NotifyIcon tray = new() { Text = "Jenkins Status", Visible = true };
+    readonly Dictionary<Color, Icon> icons = [];
+    readonly ListView list = new() { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = true, FullRowSelect = true, Sorting = SortOrder.Ascending };
+    readonly TextBox server = new() { Width = 250 };
+    readonly TextBox user = new() { Width = 120 };
+    readonly TextBox token = new() { Width = 200, UseSystemPasswordChar = true };
+    readonly NumericUpDown interval = new() { Minimum = 5, Maximum = 3600, Width = 70 };
+    readonly ToolStripStatusLabel status = new();
+    Dictionary<string, Project> last = [];
+    bool loading, polling;
+
+    public MainForm()
+    {
+        Text = "Jenkins Status - check the projects to monitor";
+        Size = new Size(900, 550);
+        tray.Icon = Icon = IconFor(Color.Gray);
+
+        list.SmallImageList = new ImageList();
+        foreach (var c in StatusColors) list.SmallImageList.Images.Add(c.Name, Dot(c));
+        list.Columns.Add("Project", 450);
+        list.Columns.Add("Last build", 100);
+        list.Columns.Add("Build #", 80);
+        list.Columns.Add("Activity", 100);
+        list.ItemChecked += (_, e) =>
+        {
+            if (loading) return;
+            if (e.Item.Checked) settings.Projects.Add(e.Item.Name); else settings.Projects.Remove(e.Item.Name);
+            settings.Save();
+            UpdateTray();
+        };
+        list.ItemActivate += (_, _) => { if (list.FocusedItem?.Tag is Project p) Open(p.WebUrl); };
+
+        server.Text = settings.ServerUrl;
+        user.Text = settings.User;
+        token.Text = settings.ApiToken;
+        interval.Value = Math.Clamp(settings.PollSeconds, 5, 3600);
+        var apply = new Button { Text = "Apply", AutoSize = true };
+        apply.Click += async (_, _) => await ApplyAsync();
+
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
+        top.Controls.AddRange([L("Server"), server, L("User"), user, L("API token"), token, L("Poll (s)"), interval, apply]);
+        var strip = new StatusStrip();
+        strip.Items.Add(status);
+        Controls.AddRange([list, top, strip]); // Fill must be added first to dock last
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Show", null, (_, _) => ShowWindow());
+        menu.Items.Add("Refresh now", null, async (_, _) => await PollAsync());
+        menu.Items.Add("Open Jenkins", null, (_, _) => Open(settings.ServerUrl));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Exit", null, (_, _) => Application.Exit());
+        tray.ContextMenuStrip = menu;
+        tray.DoubleClick += (_, _) => ShowWindow();
+        tray.BalloonTipClicked += (_, _) => ShowWindow();
+
+        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
+        FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
+        FormClosed += (_, _) => tray.Dispose();
+
+        timer.Interval = settings.PollSeconds * 1000;
+        timer.Tick += async (_, _) => await PollAsync();
+        timer.Start();
+        _ = PollAsync();
+    }
+
+    // Start hidden in the tray; only show the window on first run so credentials can be entered.
+    protected override void SetVisibleCore(bool value)
+    {
+        if (!IsHandleCreated) { CreateHandle(); value = settings.User == ""; }
+        base.SetVisibleCore(value);
+    }
+
+    async Task ApplyAsync()
+    {
+        if (!Uri.TryCreate(server.Text.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            MessageBox.Show(this, "Server must be an http(s) URL.", Text);
+            return;
+        }
+        settings.ServerUrl = uri.ToString();
+        settings.User = user.Text.Trim();
+        settings.ApiToken = token.Text.Trim();
+        settings.PollSeconds = (int)interval.Value;
+        settings.Save();
+        timer.Interval = settings.PollSeconds * 1000;
+        last = []; // server may have changed; don't report its builds as "finished"
+        list.Items.Clear();
+        await PollAsync();
+    }
+
+    async Task PollAsync()
+    {
+        if (polling) return;
+        polling = true;
+        try
+        {
+            var projects = await Jenkins.FetchAsync(http, settings);
+            var done = Jenkins.Finished(last, projects).Where(p => settings.Projects.Contains(p.Name)).ToList();
+            if (done.Count > 0)
+                tray.ShowBalloonTip(5000,
+                    done.Any(p => p.IsFailed) ? "Build failed" : "Build succeeded",
+                    string.Join("\n", done.Select(p => $"{p.Name} #{p.LastBuildLabel}: {p.LastBuildStatus}")),
+                    done.Any(p => p.IsFailed) ? ToolTipIcon.Error : ToolTipIcon.Info);
+
+            last = projects.ToDictionary(p => p.Name);
+            UpdateList();
+            UpdateTray();
+            status.Text = $"Updated {DateTime.Now:T} - {projects.Count} projects, {settings.Projects.Count} monitored";
+        }
+        catch (Exception ex) // a tray poller must survive network/auth/parse errors and keep retrying
+        {
+            status.Text = $"Error {DateTime.Now:T}: {ex.Message}";
+            tray.Icon = Icon = IconFor(Color.Gray);
+            tray.Text = Truncate("Jenkins Status: " + ex.Message);
+        }
+        finally { polling = false; }
+    }
+
+    void UpdateList()
+    {
+        loading = true;
+        list.BeginUpdate();
+        foreach (var gone in list.Items.Cast<ListViewItem>().Where(i => !last.ContainsKey(i.Name)).ToList())
+            list.Items.Remove(gone);
+        foreach (var p in last.Values)
+        {
+            var item = list.Items[p.Name] ?? list.Items.Add(
+                new ListViewItem([p.Name, "", "", ""]) { Name = p.Name, Checked = settings.Projects.Contains(p.Name) });
+            item.SubItems[1].Text = p.LastBuildStatus;
+            item.SubItems[2].Text = p.LastBuildLabel;
+            item.SubItems[3].Text = p.Activity;
+            item.ImageKey = p.Color.Name;
+            item.Tag = p;
+        }
+        list.EndUpdate();
+        loading = false;
+    }
+
+    void UpdateTray()
+    {
+        var monitored = last.Values.Where(p => settings.Projects.Contains(p.Name)).ToList();
+        tray.Icon = Icon = IconFor(Jenkins.Overall(monitored));
+        var failing = monitored.Where(p => p.IsFailed).Select(p => p.Name).ToList();
+        tray.Text = Truncate(failing.Count == 0
+            ? $"Jenkins Status: {monitored.Count} monitored, all OK"
+            : $"Failing: {string.Join(", ", failing)}");
+    }
+
+    void ShowWindow()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    static void Open(string url)
+    {
+        if (url != "") Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    static string Truncate(string s) => s.Length <= 127 ? s : s[..124] + "...";
+
+    static Label L(string text) => new() { Text = text, AutoSize = true, Margin = new Padding(8, 7, 0, 0) };
+
+    Icon IconFor(Color c)
+    {
+        if (!icons.TryGetValue(c, out var icon)) icons[c] = icon = Icon.FromHandle(Dot(c).GetHicon());
+        return icon;
+    }
+
+    static Bitmap Dot(Color c)
+    {
+        var bmp = new Bitmap(16, 16);
+        using var g = Graphics.FromImage(bmp);
+        using var brush = new SolidBrush(c);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.FillEllipse(brush, 1, 1, 13, 13);
+        g.DrawEllipse(Pens.DimGray, 1, 1, 13, 13);
+        return bmp;
+    }
+}
