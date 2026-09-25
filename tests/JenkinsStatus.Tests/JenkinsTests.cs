@@ -5,7 +5,7 @@ namespace JenkinsStatus.Tests;
 public class JenkinsTests
 {
     // Shape of /api/json?tree=jobs[fullName,url,color,lastBuild[number],lastCompletedBuild[number,result],jobs[...]]
-    const string Json = """
+    private const string Json = """
         {"jobs":[
           {"fullName":"app","url":"http://j/job/app/","color":"blue","lastBuild":{"number":12},"lastCompletedBuild":{"number":12,"result":"SUCCESS"}},
           {"fullName":"new","url":"http://j/job/new/","color":"notbuilt","lastCompletedBuild":null},
@@ -19,7 +19,7 @@ public class JenkinsTests
     [Fact]
     public void ParsesJobsFlatteningFolders()
     {
-        var ps = Jenkins.Parse(Json);
+        List<Project> ps = Jenkins.Parse(Json);
         Assert.Equal(["app", "new", "mb/feature/x"], ps.Select(p => p.Name));
         Assert.Equal(new Project("app", false, "SUCCESS", "12", "http://j/job/app/", "12"), ps[0]);
         Assert.Equal(new Project("new", false, "", "", "http://j/job/new/"), ps[1]);
@@ -31,7 +31,7 @@ public class JenkinsTests
     public void FinishedOnlyReportsChangedBuildsOfKnownProjects()
     {
         var before = Jenkins.Parse(Json).ToDictionary(p => p.Name);
-        var after = Jenkins.Parse(Json.Replace("\"number\":7", "\"number\":8").Replace("\"app\"", "\"other\""));
+        List<Project> after = Jenkins.Parse(Json.Replace("\"number\":7", "\"number\":8").Replace("\"app\"", "\"other\""));
         Assert.Equal(["mb/feature/x"], Jenkins.Finished(before, after).Select(p => p.Name));
         Assert.Empty(Jenkins.Finished(new Dictionary<string, Project>(), after)); // first poll never notifies
     }
@@ -39,7 +39,7 @@ public class JenkinsTests
     [Fact]
     public void OverallPrefersFailureThenBuilding()
     {
-        var ps = Jenkins.Parse(Json);
+        List<Project> ps = Jenkins.Parse(Json);
         Assert.Equal(Color.Red, Jenkins.Overall(ps));
         Assert.Equal(Color.LimeGreen, Jenkins.Overall(ps.Take(2)));
         Assert.Equal(Color.Gray, Jenkins.Overall([]));

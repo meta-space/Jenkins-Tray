@@ -1,12 +1,16 @@
 namespace JenkinsStatus;
 
-static class Program
+internal static class Program
 {
     [STAThread]
-    static void Main()
+    private static void Main()
     {
-        using var mutex = new Mutex(true, "JenkinsStatus.SingleInstance", out var first);
-        if (!first) return;
+        using var mutex = new Mutex(true, "JenkinsStatus.SingleInstance", out bool first);
+        if (!first)
+        {
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm());
     }

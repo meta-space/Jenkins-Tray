@@ -18,20 +18,25 @@ public record Project(string Name, bool IsBuilding, string Result, string BuildN
 
 public static class Jenkins
 {
-    const string Fields = "fullName,url,color,lastBuild[number],lastCompletedBuild[number,result]";
+    private const string Fields = "fullName,url,color,lastBuild[number],lastCompletedBuild[number,result]";
     // 3 nesting levels (folder > multibranch > branch); add a level if deeper folders show up.
-    const string Tree = $"jobs[{Fields},jobs[{Fields},jobs[{Fields}]]]";
+    private const string Tree = $"jobs[{Fields},jobs[{Fields},jobs[{Fields}]]]";
 
-    public static List<Project> Parse(string json) => Leaves(JsonNode.Parse(json)!["jobs"]).ToList();
+    public static List<Project> Parse(string json)
+    {
+        return Leaves(JsonNode.Parse(json)!["jobs"]).ToList();
+    }
 
     // Folders/multibranch projects have "jobs" (or, at the deepest level, no "color"); only real jobs are returned.
-    static IEnumerable<Project> Leaves(JsonNode? jobs) =>
-        jobs?.AsArray().SelectMany(j => j!["jobs"] is JsonArray children ? Leaves(children)
-            : j["color"] is null ? [] : [ToProject(j)]) ?? [];
-
-    static Project ToProject(JsonNode j)
+    private static IEnumerable<Project> Leaves(JsonNode? jobs)
     {
-        var last = j["lastCompletedBuild"];
+        return jobs?.AsArray().SelectMany(j => j!["jobs"] is JsonArray children ? Leaves(children)
+            : j["color"] is null ? [] : [ToProject(j)]) ?? [];
+    }
+
+    private static Project ToProject(JsonNode j)
+    {
+        JsonNode? last = j["lastCompletedBuild"];
         return new Project(
             Uri.UnescapeDataString((string)j["fullName"]!), // branch names are stored escaped, e.g. feature%2Ffoo
             ((string?)j["color"] ?? "").EndsWith("_anime"),
@@ -45,64 +50,77 @@ public static class Jenkins
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/api/json?tree=" + Tree);
         AddAuth(req, s);
-        using var res = await http.SendAsync(req);
+        using HttpResponseMessage res = await http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         return Parse(await res.Content.ReadAsStringAsync());
     }
 
-    public static Task StartBuildAsync(HttpClient http, Settings s, Project p) => PostAsync(http, s, p.WebUrl + "build");
+    public static Task StartBuildAsync(HttpClient http, Settings s, Project p)
+    {
+        return PostAsync(http, s, p.WebUrl + "build");
+    }
 
-    public static Task CancelBuildAsync(HttpClient http, Settings s, Project p) =>
-        PostAsync(http, s, p.WebUrl + p.LastBuildNumber + "/stop");
+    public static Task CancelBuildAsync(HttpClient http, Settings s, Project p)
+    {
+        return PostAsync(http, s, p.WebUrl + p.LastBuildNumber + "/stop");
+    }
 
     public static async Task<string> ConsoleTextAsync(HttpClient http, Settings s, Project p)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, p.WebUrl + p.LastBuildNumber + "/consoleText");
         AddAuth(req, s);
-        using var res = await http.SendAsync(req);
+        using HttpResponseMessage res = await http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         return await res.Content.ReadAsStringAsync();
     }
 
-    static async Task PostAsync(HttpClient http, Settings s, string url)
+    private static async Task PostAsync(HttpClient http, Settings s, string url)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         AddAuth(req, s);
         await AddCrumbAsync(req, http, s);
-        using var res = await http.SendAsync(req);
+        using HttpResponseMessage res = await http.SendAsync(req);
         res.EnsureSuccessStatusCode();
     }
 
-    static void AddAuth(HttpRequestMessage req, Settings s)
+    private static void AddAuth(HttpRequestMessage req, Settings s)
     {
         if (s.User != "")
+        {
             req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
                 Convert.ToBase64String(Encoding.UTF8.GetBytes($"{s.User}:{s.ApiToken}")));
+        }
     }
 
     // Jenkins rejects POSTs without a CSRF crumb when CSRF protection is enabled; harmless to skip if it's off.
-    static async Task AddCrumbAsync(HttpRequestMessage req, HttpClient http, Settings s)
+    private static async Task AddCrumbAsync(HttpRequestMessage req, HttpClient http, Settings s)
     {
         try
         {
             using var creq = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/crumbIssuer/api/json");
             AddAuth(creq, s);
-            using var cres = await http.SendAsync(creq);
-            if (!cres.IsSuccessStatusCode) return;
-            var json = JsonNode.Parse(await cres.Content.ReadAsStringAsync())!;
+            using HttpResponseMessage cres = await http.SendAsync(creq);
+            if (!cres.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            JsonNode json = JsonNode.Parse(await cres.Content.ReadAsStringAsync())!;
             req.Headers.Add((string)json["crumbRequestField"]!, (string)json["crumb"]!);
         }
         catch { /* no crumb issuer (CSRF protection disabled); proceed without one */ }
     }
 
     // Projects whose last completed build changed since the previous poll.
-    public static List<Project> Finished(IReadOnlyDictionary<string, Project> before, IEnumerable<Project> after) =>
-        after.Where(p => before.TryGetValue(p.Name, out var old) && old.BuildNumber != p.BuildNumber).ToList();
+    public static List<Project> Finished(IReadOnlyDictionary<string, Project> before, IEnumerable<Project> after)
+    {
+        return after.Where(p => before.TryGetValue(p.Name, out Project? old) && old.BuildNumber != p.BuildNumber).ToList();
+    }
 
     public static Color Overall(IEnumerable<Project> monitored)
     {
         var ps = monitored.ToList();
-        return 
+        return
               ps.Any(p => p.IsBuilding) ? Color.Orange
              : ps.Any(p => p.IsFailed) ? Color.Red
              : ps.Any(p => p.IsSuccess) ? Color.LimeGreen
@@ -121,17 +139,16 @@ public class Settings
     [JsonIgnore]
     public string ApiToken
     {
-        get => ProtectedToken == "" ? "" : Encoding.UTF8.GetString(
-            ProtectedData.Unprotect(Convert.FromBase64String(ProtectedToken), null, DataProtectionScope.CurrentUser));
-        set => ProtectedToken = value == "" ? "" : Convert.ToBase64String(
-            ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+        get => ProtectedToken == "" ? "" : Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(ProtectedToken), null, DataProtectionScope.CurrentUser));
+        set => ProtectedToken = value == "" ? "" : Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
     }
 
-    static readonly string FilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JenkinsStatus", "settings.json");
+    private static readonly string FilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JenkinsStatus", "settings.json");
 
-    public static Settings Load() =>
-        File.Exists(FilePath) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new() : new();
+    public static Settings Load()
+    {
+        return File.Exists(FilePath) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new() : new();
+    }
 
     public void Save()
     {

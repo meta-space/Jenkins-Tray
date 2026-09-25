@@ -5,34 +5,46 @@ namespace JenkinsStatus;
 
 public class MainForm : Form
 {
-    static readonly Color[] StatusColors = [Color.LimeGreen, Color.Red, Color.Orange, Color.Gray];
+    private static readonly Color[] StatusColors = [Color.LimeGreen, Color.Red, Color.Orange, Color.Gray];
 
-    readonly Settings settings = Settings.Load();
-    readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
-    readonly System.Windows.Forms.Timer timer = new();
-    readonly NotifyIcon tray = new() { Text = "Jenkins Status", Visible = true };
-    readonly Dictionary<Color, Icon> icons = [];
-    readonly ListView monitored = NewList(checkBoxes: false);
-    readonly ListView all = NewList(checkBoxes: true);
-    readonly TextBox server = new() { Width = 240 };
-    readonly TextBox user = new() { Width = 120 };
-    readonly TextBox token = new() { Width = 260, UseSystemPasswordChar = true };
-    readonly NumericUpDown interval = new() { Minimum = 5, Maximum = 3600, Width = 70 };
-    readonly ToolStripStatusLabel status = new();
-    Dictionary<string, Project> last = [];
-    bool loading, polling, started;
-    Project? menuProject;
+    private readonly Settings settings = Settings.Load();
+    private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private readonly System.Windows.Forms.Timer timer = new();
+    private readonly NotifyIcon tray = new() { Text = @"Jenkins Status", Visible = true };
+    private readonly Dictionary<Color, Icon> icons = [];
+    private readonly ListView monitored = NewList(checkBoxes: false);
+    private readonly ListView all = NewList(checkBoxes: true);
+    private readonly TextBox server = new() { Width = 240 };
+    private readonly TextBox user = new() { Width = 120 };
+    private readonly TextBox token = new() { Width = 260, UseSystemPasswordChar = true };
+    private readonly NumericUpDown interval = new() { Minimum = 5, Maximum = 3600, Width = 70 };
+    private readonly ToolStripStatusLabel status = new();
+    private Dictionary<string, Project> last = [];
+    private bool loading, polling, started;
+    private Project? menuProject;
 
     public MainForm()
     {
-        Text = "Jenkins Status";
+        Text = @"Jenkins Status";
         Size = new Size(760, 500);
         tray.Icon = Icon = IconFor(Color.Gray);
 
         all.ItemChecked += (_, e) =>
         {
-            if (loading) return;
-            if (e.Item.Checked) settings.Projects.Add(e.Item.Name); else settings.Projects.Remove(e.Item.Name);
+            if (loading)
+            {
+                return;
+            }
+
+            if (e.Item.Checked)
+            {
+                settings.Projects.Add(e.Item.Name);
+            }
+            else
+            {
+                settings.Projects.Remove(e.Item.Name);
+            }
+
             settings.Save();
             UpdateList();
             UpdateTray();
@@ -42,13 +54,16 @@ public class MainForm : Form
         tabs.TabPages.Add("All projects (check to monitor)");
         tabs.TabPages[0].Controls.Add(monitored);
         tabs.TabPages[1].Controls.Add(all);
-        if (settings.Projects.Count == 0) tabs.SelectedIndex = 1;
+        if (settings.Projects.Count == 0)
+        {
+            tabs.SelectedIndex = 1;
+        }
 
         server.Text = settings.ServerUrl;
         user.Text = settings.User;
         token.Text = settings.ApiToken;
         interval.Value = Math.Clamp(settings.PollSeconds, 5, 3600);
-        var apply = new Button { Text = "Apply", AutoSize = true };
+        var apply = new Button { Text = @"Apply", AutoSize = true };
         apply.Click += async (_, _) => await ApplyAsync();
 
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
@@ -70,7 +85,11 @@ public class MainForm : Form
         {
             menuProject = (listMenu.SourceControl as ListView)?.FocusedItem?.Tag as Project;
             e.Cancel = menuProject is null;
-            if (menuProject is not { } p) return;
+            if (menuProject is not { } p)
+            {
+                return;
+            }
+
             startItem.Enabled = !p.IsBuilding;
             cancelItem.Enabled = p.IsBuilding;
             consoleItem.Enabled = p.LastBuildNumber != "";
@@ -81,18 +100,22 @@ public class MainForm : Form
         {
             try
             {
-                var text = await Jenkins.ConsoleTextAsync(http, settings, menuProject!);
+                string text = await Jenkins.ConsoleTextAsync(http, settings, menuProject!);
                 Clipboard.SetText(text == "" ? " " : text);
-                status.Text = "Console output copied to clipboard";
+                status.Text = @"Console output copied to clipboard";
             }
             catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
         };
-        foreach (var list in new[] { monitored, all })
+        foreach (ListView? list in new[] { monitored, all })
         {
             list.ContextMenuStrip = listMenu;
             list.MouseUp += (_, e) =>
             {
-                if (e.Button != MouseButtons.Right) return;
+                if (e.Button != MouseButtons.Right)
+                {
+                    return;
+                }
+
                 if (list.HitTest(e.Location).Item is { } item) { list.SelectedItems.Clear(); item.Selected = item.Focused = true; }
             };
         }
@@ -107,7 +130,7 @@ public class MainForm : Form
         tray.DoubleClick += (_, _) => ShowWindow();
         tray.BalloonTipClicked += (_, _) => ShowWindow();
 
-        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
+        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) { Hide(); } };
         FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
         FormClosed += (_, _) => tray.Dispose();
 
@@ -120,15 +143,15 @@ public class MainForm : Form
     // Start hidden in the tray; only show the window on first run so credentials can be entered.
     protected override void SetVisibleCore(bool value)
     {
-        if (!started) { started = true; if (!IsHandleCreated) CreateHandle(); value = settings.User == ""; }
+        if (!started) { started = true; if (!IsHandleCreated) { CreateHandle(); } value = settings.User == ""; }
         base.SetVisibleCore(value);
     }
 
-    async Task ApplyAsync()
+    private async Task ApplyAsync()
     {
-        if (!Uri.TryCreate(server.Text.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        if (!Uri.TryCreate(server.Text.Trim(), UriKind.Absolute, out Uri? uri) || uri.Scheme is not ("http" or "https"))
         {
-            MessageBox.Show(this, "Server must be an http(s) URL.", Text);
+            MessageBox.Show(this, @"Server must be an http(s) URL.", Text);
             return;
         }
         settings.ServerUrl = uri.ToString();
@@ -142,41 +165,47 @@ public class MainForm : Form
         await PollAsync();
     }
 
-    async Task PollAsync()
+    private async Task PollAsync()
     {
-        if (polling) return;
+        if (polling)
+        {
+            return;
+        }
+
         polling = true;
         try
         {
-            var projects = await Jenkins.FetchAsync(http, settings);
+            List<Project> projects = await Jenkins.FetchAsync(http, settings);
             var done = Jenkins.Finished(last, projects).Where(p => settings.Projects.Contains(p.Name)).ToList();
             if (done.Count > 0)
-                tray.ShowBalloonTip(5000,
+            {
+                tray.ShowBalloonTip(15000,
                     done.Any(p => p.IsFailed) ? "Build failed" : "Build succeeded",
                     string.Join("\n", done.Select(p => $"{p.Name} #{p.BuildNumber}: {p.Result}")),
                     done.Any(p => p.IsFailed) ? ToolTipIcon.Error : ToolTipIcon.Info);
+            }
 
             last = projects.ToDictionary(p => p.Name);
             UpdateList();
             UpdateTray();
-            status.Text = $"Updated {DateTime.Now:T} - {projects.Count} projects, {settings.Projects.Count} monitored";
+            status.Text = @$"Updated {DateTime.Now:T} - {projects.Count} projects, {settings.Projects.Count} monitored";
         }
         catch (Exception ex) // a tray poller must survive network/auth/parse errors and keep retrying
         {
-            status.Text = $"Error {DateTime.Now:T}: {ex.Message}";
+            status.Text = @$"Error {DateTime.Now:T}: {ex.Message}";
             tray.Icon = Icon = IconFor(Color.Gray);
             tray.Text = Truncate("Jenkins Status: " + ex.Message);
         }
         finally { polling = false; }
     }
 
-    async Task RunMenuAction(Func<Project, Task> action, string doneMessage)
+    private async Task RunMenuAction(Func<Project, Task> action, string doneMessage)
     {
         try { await action(menuProject!); status.Text = doneMessage; await PollAsync(); }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
     }
 
-    void UpdateList()
+    private void UpdateList()
     {
         loading = true;
         Sync(all, last.Values);
@@ -185,16 +214,18 @@ public class MainForm : Form
     }
 
     // Update rows in place (keeps selection and scroll position), adding/removing as projects come and go.
-    void Sync(ListView list, IEnumerable<Project> projects)
+    private void Sync(ListView list, IEnumerable<Project> projects)
     {
         var wanted = projects.ToDictionary(p => p.Name);
         list.BeginUpdate();
-        foreach (var gone in list.Items.Cast<ListViewItem>().Where(i => !wanted.ContainsKey(i.Name)).ToList())
-            list.Items.Remove(gone);
-        foreach (var p in wanted.Values)
+        foreach (ListViewItem? gone in list.Items.Cast<ListViewItem>().Where(i => !wanted.ContainsKey(i.Name)).ToList())
         {
-            var item = list.Items[p.Name] ?? list.Items.Add(
-                new ListViewItem([p.Name, "", "", ""]) { Name = p.Name, Checked = settings.Projects.Contains(p.Name) });
+            list.Items.Remove(gone);
+        }
+
+        foreach (Project? p in wanted.Values)
+        {
+            ListViewItem item = list.Items[p.Name] ?? list.Items.Add(new ListViewItem([p.Name, "", "", ""]) { Name = p.Name, Checked = settings.Projects.Contains(p.Name) });
             item.SubItems[1].Text = p.Result;
             item.SubItems[2].Text = p.BuildNumber;
             item.SubItems[3].Text = p.IsBuilding ? "Building" : "";
@@ -204,20 +235,30 @@ public class MainForm : Form
         list.EndUpdate();
     }
 
-    static ListView NewList(bool checkBoxes)
+    private static ListView NewList(bool checkBoxes)
     {
-        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = checkBoxes, FullRowSelect = true, Sorting = SortOrder.Ascending };
-        list.SmallImageList = new ImageList();
-        foreach (var c in StatusColors) list.SmallImageList.Images.Add(c.Name, Dot(c));
+        var list = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            CheckBoxes = checkBoxes,
+            FullRowSelect = true,
+            Sorting = SortOrder.Ascending,
+            SmallImageList = new ImageList()
+        };
+        foreach (Color c in StatusColors)
+        {
+            list.SmallImageList.Images.Add(c.Name, Dot(c));
+        }
         list.Columns.Add("Project", 450);
         list.Columns.Add("Last build", 100);
         list.Columns.Add("Build #", 80);
         list.Columns.Add("Activity", 100);
-        list.ItemActivate += (_, _) => { if (list.FocusedItem?.Tag is Project p) Open(p.WebUrl); };
+        list.ItemActivate += (_, _) => { if (list.FocusedItem?.Tag is Project p) { Open(p.WebUrl); } };
         return list;
     }
 
-    void UpdateTray()
+    private void UpdateTray()
     {
         var watched = last.Values.Where(p => settings.Projects.Contains(p.Name)).ToList();
         tray.Icon = Icon = IconFor(Jenkins.Overall(watched));
@@ -227,38 +268,51 @@ public class MainForm : Form
             : $"Failing: {string.Join(", ", failing)}");
     }
 
-    void ShowWindow()
+    private void ShowWindow()
     {
         Show();
         WindowState = FormWindowState.Normal;
         Activate();
     }
 
-    static void Open(string url)
+    private static void Open(string url)
     {
-        if (url != "") Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        if (url != "")
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
     }
 
-    static string Truncate(string s) => s.Length <= 127 ? s : s[..124] + "...";
-
-    static Label L(string text) => new() { Text = text, AutoSize = true, Margin = new Padding(8, 7, 0, 0) };
-
-    static readonly Image Waiter = LoadWaiter();
-
-    static Image LoadWaiter()
+    private static string Truncate(string s)
     {
-        using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("waiter.png")!;
+        return s.Length <= 127 ? s : s[..124] + "...";
+    }
+
+    private static Label L(string text)
+    {
+        return new() { Text = text, AutoSize = true, Margin = new Padding(8, 7, 0, 0) };
+    }
+
+    private static readonly Image Waiter = LoadWaiter();
+
+    private static Image LoadWaiter()
+    {
+        using Stream stream = typeof(MainForm).Assembly.GetManifestResourceStream("waiter.png")!;
         return Image.FromStream(stream);
     }
 
     // Window/tray icon: the waiter mascot badged with the overall status color (also shown as the toast notification icon).
-    Icon IconFor(Color c)
+    private Icon IconFor(Color c)
     {
-        if (!icons.TryGetValue(c, out var icon)) icons[c] = icon = Icon.FromHandle(WaiterBadge(c).GetHicon());
+        if (!icons.TryGetValue(c, out Icon? icon))
+        {
+            icons[c] = icon = Icon.FromHandle(WaiterBadge(c).GetHicon());
+        }
+
         return icon;
     }
 
-    static Bitmap WaiterBadge(Color c)
+    private static Bitmap WaiterBadge(Color c)
     {
         var bmp = new Bitmap(Waiter, 32, 32);
         using var g = Graphics.FromImage(bmp);
@@ -269,7 +323,7 @@ public class MainForm : Form
         return bmp;
     }
 
-    static Bitmap Dot(Color c)
+    private static Bitmap Dot(Color c)
     {
         var bmp = new Bitmap(16, 16);
         using var g = Graphics.FromImage(bmp);
