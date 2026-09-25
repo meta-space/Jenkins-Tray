@@ -8,7 +8,8 @@ using System.Text.Json.Serialization;
 namespace JenkinsStatus;
 
 // A buildable Jenkins job. Result is the Jenkins result of the last completed build (SUCCESS, FAILURE, UNSTABLE, ABORTED, ...).
-public record Project(string Name, bool IsBuilding, string Result, string BuildNumber, string WebUrl)
+// LastBuildNumber is the most recent build (possibly still running), needed to cancel it or fetch its console output.
+public record Project(string Name, bool IsBuilding, string Result, string BuildNumber, string WebUrl, string LastBuildNumber = "")
 {
     public bool IsFailed => Result is "FAILURE" or "UNSTABLE";
     public bool IsSuccess => Result == "SUCCESS";
@@ -17,7 +18,7 @@ public record Project(string Name, bool IsBuilding, string Result, string BuildN
 
 public static class Jenkins
 {
-    const string Fields = "fullName,url,color,lastCompletedBuild[number,result]";
+    const string Fields = "fullName,url,color,lastBuild[number],lastCompletedBuild[number,result]";
     // 3 nesting levels (folder > multibranch > branch); add a level if deeper folders show up.
     const string Tree = $"jobs[{Fields},jobs[{Fields},jobs[{Fields}]]]";
 
@@ -36,18 +37,62 @@ public static class Jenkins
             ((string?)j["color"] ?? "").EndsWith("_anime"),
             (string?)last?["result"] ?? "",
             last?["number"]?.ToString() ?? "",
-            (string?)j["url"] ?? "");
+            (string?)j["url"] ?? "",
+            j["lastBuild"]?["number"]?.ToString() ?? "");
     }
 
     public static async Task<List<Project>> FetchAsync(HttpClient http, Settings s)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/api/json?tree=" + Tree);
-        if (s.User != "")
-            req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
-                Convert.ToBase64String(Encoding.UTF8.GetBytes($"{s.User}:{s.ApiToken}")));
+        AddAuth(req, s);
         using var res = await http.SendAsync(req);
         res.EnsureSuccessStatusCode();
         return Parse(await res.Content.ReadAsStringAsync());
+    }
+
+    public static Task StartBuildAsync(HttpClient http, Settings s, Project p) => PostAsync(http, s, p.WebUrl + "build");
+
+    public static Task CancelBuildAsync(HttpClient http, Settings s, Project p) =>
+        PostAsync(http, s, p.WebUrl + p.LastBuildNumber + "/stop");
+
+    public static async Task<string> ConsoleTextAsync(HttpClient http, Settings s, Project p)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, p.WebUrl + p.LastBuildNumber + "/consoleText");
+        AddAuth(req, s);
+        using var res = await http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        return await res.Content.ReadAsStringAsync();
+    }
+
+    static async Task PostAsync(HttpClient http, Settings s, string url)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        AddAuth(req, s);
+        await AddCrumbAsync(req, http, s);
+        using var res = await http.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+    }
+
+    static void AddAuth(HttpRequestMessage req, Settings s)
+    {
+        if (s.User != "")
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes($"{s.User}:{s.ApiToken}")));
+    }
+
+    // Jenkins rejects POSTs without a CSRF crumb when CSRF protection is enabled; harmless to skip if it's off.
+    static async Task AddCrumbAsync(HttpRequestMessage req, HttpClient http, Settings s)
+    {
+        try
+        {
+            using var creq = new HttpRequestMessage(HttpMethod.Get, s.ServerUrl.TrimEnd('/') + "/crumbIssuer/api/json");
+            AddAuth(creq, s);
+            using var cres = await http.SendAsync(creq);
+            if (!cres.IsSuccessStatusCode) return;
+            var json = JsonNode.Parse(await cres.Content.ReadAsStringAsync())!;
+            req.Headers.Add((string)json["crumbRequestField"]!, (string)json["crumb"]!);
+        }
+        catch { /* no crumb issuer (CSRF protection disabled); proceed without one */ }
     }
 
     // Projects whose last completed build changed since the previous poll.

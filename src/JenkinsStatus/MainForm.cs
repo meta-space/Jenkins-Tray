@@ -21,6 +21,7 @@ public class MainForm : Form
     readonly ToolStripStatusLabel status = new();
     Dictionary<string, Project> last = [];
     bool loading, polling, started;
+    Project? menuProject;
 
     public MainForm()
     {
@@ -58,6 +59,42 @@ public class MainForm : Form
         // Create the checkbox list's handle while it is empty: a ListView whose handle is created later (tab first shown)
         // re-syncs its check states and fires ItemChecked for every row, which would re-enter UpdateList and duplicate rows.
         _ = all.Handle;
+
+        var listMenu = new ContextMenuStrip();
+        var startItem = new ToolStripMenuItem("Start build");
+        var cancelItem = new ToolStripMenuItem("Cancel build");
+        var consoleItem = new ToolStripMenuItem("Copy console output");
+        listMenu.Items.AddRange([startItem, cancelItem, consoleItem]);
+        listMenu.Opening += (_, e) =>
+        {
+            menuProject = (listMenu.SourceControl as ListView)?.FocusedItem?.Tag as Project;
+            e.Cancel = menuProject is null;
+            if (menuProject is not { } p) return;
+            startItem.Enabled = !p.IsBuilding;
+            cancelItem.Enabled = p.IsBuilding;
+            consoleItem.Enabled = p.LastBuildNumber != "";
+        };
+        startItem.Click += async (_, _) => await RunMenuAction(p => Jenkins.StartBuildAsync(http, settings, p), "Build started");
+        cancelItem.Click += async (_, _) => await RunMenuAction(p => Jenkins.CancelBuildAsync(http, settings, p), "Build cancelled");
+        consoleItem.Click += async (_, _) =>
+        {
+            try
+            {
+                var text = await Jenkins.ConsoleTextAsync(http, settings, menuProject!);
+                Clipboard.SetText(text == "" ? " " : text);
+                status.Text = "Console output copied to clipboard";
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
+        };
+        foreach (var list in new[] { monitored, all })
+        {
+            list.ContextMenuStrip = listMenu;
+            list.MouseUp += (_, e) =>
+            {
+                if (e.Button != MouseButtons.Right) return;
+                if (list.HitTest(e.Location).Item is { } item) { list.SelectedItems.Clear(); item.Selected = item.Focused = true; }
+            };
+        }
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show", null, (_, _) => ShowWindow());
@@ -130,6 +167,12 @@ public class MainForm : Form
             tray.Text = Truncate("Jenkins Status: " + ex.Message);
         }
         finally { polling = false; }
+    }
+
+    async Task RunMenuAction(Func<Project, Task> action, string doneMessage)
+    {
+        try { await action(menuProject!); status.Text = doneMessage; await PollAsync(); }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
     }
 
     void UpdateList()

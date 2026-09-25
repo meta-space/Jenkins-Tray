@@ -4,13 +4,13 @@ namespace JenkinsStatus.Tests;
 
 public class JenkinsTests
 {
-    // Shape of /api/json?tree=jobs[fullName,url,color,lastCompletedBuild[number,result],jobs[...]]
+    // Shape of /api/json?tree=jobs[fullName,url,color,lastBuild[number],lastCompletedBuild[number,result],jobs[...]]
     const string Json = """
         {"jobs":[
-          {"fullName":"app","url":"http://j/job/app/","color":"blue","lastCompletedBuild":{"number":12,"result":"SUCCESS"}},
+          {"fullName":"app","url":"http://j/job/app/","color":"blue","lastBuild":{"number":12},"lastCompletedBuild":{"number":12,"result":"SUCCESS"}},
           {"fullName":"new","url":"http://j/job/new/","color":"notbuilt","lastCompletedBuild":null},
           {"fullName":"mb","url":"http://j/job/mb/","jobs":[
-            {"fullName":"mb/feature%2Fx","url":"http://j/job/mb/job/feature%252Fx/","color":"red_anime","lastCompletedBuild":{"number":7,"result":"FAILURE"}}
+            {"fullName":"mb/feature%2Fx","url":"http://j/job/mb/job/feature%252Fx/","color":"red_anime","lastBuild":{"number":8},"lastCompletedBuild":{"number":7,"result":"FAILURE"}}
           ]},
           {"fullName":"deep-folder","url":"http://j/job/deep-folder/"}
         ]}
@@ -21,9 +21,10 @@ public class JenkinsTests
     {
         var ps = Jenkins.Parse(Json);
         Assert.Equal(["app", "new", "mb/feature/x"], ps.Select(p => p.Name));
-        Assert.Equal(new Project("app", false, "SUCCESS", "12", "http://j/job/app/"), ps[0]);
+        Assert.Equal(new Project("app", false, "SUCCESS", "12", "http://j/job/app/", "12"), ps[0]);
         Assert.Equal(new Project("new", false, "", "", "http://j/job/new/"), ps[1]);
         Assert.True(ps[2].IsBuilding && ps[2].IsFailed);
+        Assert.Equal("8", ps[2].LastBuildNumber); // the running build, distinct from the last *completed* one (#7)
     }
 
     [Fact]
