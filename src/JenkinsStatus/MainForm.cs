@@ -242,10 +242,30 @@ public class MainForm : Form
 
     static Label L(string text) => new() { Text = text, AutoSize = true, Margin = new Padding(8, 7, 0, 0) };
 
+    static readonly Image Waiter = LoadWaiter();
+
+    static Image LoadWaiter()
+    {
+        using var stream = typeof(MainForm).Assembly.GetManifestResourceStream("waiter.png")!;
+        return Image.FromStream(stream);
+    }
+
+    // Window/tray icon: the waiter mascot badged with the overall status color (also shown as the toast notification icon).
     Icon IconFor(Color c)
     {
-        if (!icons.TryGetValue(c, out var icon)) icons[c] = icon = Icon.FromHandle(Dot(c).GetHicon());
+        if (!icons.TryGetValue(c, out var icon)) icons[c] = icon = Icon.FromHandle(WaiterBadge(c).GetHicon());
         return icon;
+    }
+
+    static Bitmap WaiterBadge(Color c)
+    {
+        var bmp = new Bitmap(Waiter, 32, 32);
+        using var g = Graphics.FromImage(bmp);
+        using var brush = new SolidBrush(c);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.FillEllipse(brush, 18, 18, 12, 12);
+        g.DrawEllipse(Pens.DimGray, 18, 18, 12, 12);
+        return bmp;
     }
 
     static Bitmap Dot(Color c)
