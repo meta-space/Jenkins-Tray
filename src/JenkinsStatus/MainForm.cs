@@ -14,9 +14,9 @@ public class MainForm : Form
     readonly Dictionary<Color, Icon> icons = [];
     readonly ListView monitored = NewList(checkBoxes: false);
     readonly ListView all = NewList(checkBoxes: true);
-    readonly TextBox server = new() { Width = 250 };
+    readonly TextBox server = new() { Width = 240 };
     readonly TextBox user = new() { Width = 120 };
-    readonly TextBox token = new() { Width = 200, UseSystemPasswordChar = true };
+    readonly TextBox token = new() { Width = 260, UseSystemPasswordChar = true };
     readonly NumericUpDown interval = new() { Minimum = 5, Maximum = 3600, Width = 70 };
     readonly ToolStripStatusLabel status = new();
     Dictionary<string, Project> last = [];
@@ -26,7 +26,7 @@ public class MainForm : Form
     public MainForm()
     {
         Text = "Jenkins Status";
-        Size = new Size(900, 550);
+        Size = new Size(760, 500);
         tray.Icon = Icon = IconFor(Color.Gray);
 
         all.ItemChecked += (_, e) =>
@@ -52,7 +52,8 @@ public class MainForm : Form
         apply.Click += async (_, _) => await ApplyAsync();
 
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
-        top.Controls.AddRange([L("Server"), server, L("User"), user, L("API token"), token, L("Poll (s)"), interval, apply]);
+        top.Controls.AddRange([L("Server"), server, L("Poll (s)"), interval, apply, L("User"), user, L("API token"), token]);
+        top.SetFlowBreak(apply, true);
         var strip = new StatusStrip();
         strip.Items.Add(status);
         Controls.AddRange([tabs, top, strip]); // Fill must be added first to dock last
