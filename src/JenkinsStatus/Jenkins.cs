@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -57,7 +58,7 @@ public static class Jenkins
 
     public static Task StartBuildAsync(HttpClient http, Settings s, Project p)
     {
-        return PostAsync(http, s, p.WebUrl + "build");
+        return PostAsync(http, s, p.WebUrl + "build", p.WebUrl + "buildWithParameters");
     }
 
     public static Task CancelBuildAsync(HttpClient http, Settings s, Project p)
@@ -74,13 +75,27 @@ public static class Jenkins
         return await res.Content.ReadAsStringAsync();
     }
 
-    private static async Task PostAsync(HttpClient http, Settings s, string url)
+    private static async Task PostAsync(HttpClient http, Settings s, string url, string? retryOn400 = null)
+    {
+        var res = await SendPost(http, s, url);
+        if (res.StatusCode == HttpStatusCode.BadRequest && retryOn400 != null)
+        {
+            // Jenkins refuses POST .../build with 400 for jobs that have build parameters and tells
+            // the caller to use .../buildWithParameters (an empty POST starts with the default values).
+            // Other status codes are genuine errors and are not retried.
+            res.Dispose();
+            res = await SendPost(http, s, retryOn400);
+        }
+        res.EnsureSuccessStatusCode();
+        res.Dispose();
+    }
+
+    private static async Task<HttpResponseMessage> SendPost(HttpClient http, Settings s, string url)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, url);
         AddAuth(req, s);
         await AddCrumbAsync(req, http, s);
-        using HttpResponseMessage res = await http.SendAsync(req);
-        res.EnsureSuccessStatusCode();
+        return await http.SendAsync(req);
     }
 
     private static void AddAuth(HttpRequestMessage req, Settings s)
