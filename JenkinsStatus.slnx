@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JenkinsStatus/JenkinsStatus.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JenkinsStatus.Tests/JenkinsStatus.Tests.csproj" />
+  </Folder>
+</Solution>
