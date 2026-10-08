@@ -5,7 +5,7 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
-        using var mutex = new Mutex(true, "JenkinsStatus.SingleInstance", out bool first);
+        using var mutex = new Mutex(true, "JenkinsTray.SingleInstance", out bool first);
         if (!first)
         {
             return;

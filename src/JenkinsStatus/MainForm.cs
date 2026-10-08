@@ -25,7 +25,7 @@ public class MainForm : Form
 
     public MainForm()
     {
-        Text = @"Jenkins Status";
+        Text = @"Jenkins Tray";
         Size = new Size(760, 500);
         tray.Icon = Icon = IconFor(Color.Gray);
 
