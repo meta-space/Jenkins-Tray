@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PackageIcon>waiter.png</PackageIcon>
     <ApplicationIcon>waiter.ico</ApplicationIcon>
+    <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
   </PropertyGroup>
 
   <ItemGroup>
