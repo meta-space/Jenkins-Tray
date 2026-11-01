@@ -141,6 +141,11 @@ public static class Jenkins
              : ps.Any(p => p.IsSuccess) ? Color.LimeGreen
              : Color.Gray;
     }
+
+    public static string DemangleOutput(string text)
+    {
+        return text.Replace("\\n", "\n");
+    }
 }
 
 public class Settings

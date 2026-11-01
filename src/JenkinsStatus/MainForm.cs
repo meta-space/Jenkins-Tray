@@ -101,6 +101,7 @@ public class MainForm : Form
             try
             {
                 string text = await Jenkins.ConsoleTextAsync(http, settings, menuProject!);
+                text = Jenkins.DemangleOutput(text);
                 Clipboard.SetText(text == "" ? " " : text);
                 status.Text = @"Console output copied to clipboard";
             }
